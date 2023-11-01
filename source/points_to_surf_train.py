@@ -267,8 +267,8 @@ def points_to_surf_train(opt):
     start_epoch = 0
     if opt.refine != '':
         print(f'Refining weights from {opt.refine}')
-        p2s_model.cuda(device=devices[0])  # same order as in training
-        p2s_model = torch.nn.DataParallel(p2s_model, device_ids=devices)
+        # p2s_model.cuda(device=devices[0])  # same order as in training
+        # p2s_model = torch.nn.DataParallel(p2s_model, device_ids=devices)
         p2s_model.load_state_dict(torch.load(opt.refine))
         try:
             # expecting a file name like 'vanilla_model_50.pth'
@@ -410,8 +410,9 @@ def points_to_surf_train(opt):
     scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=opt.scheduler_steps, gamma=0.1)
 
     if opt.refine == '':
-        p2s_model.cuda(device=devices[0])
-        p2s_model = torch.nn.DataParallel(p2s_model, device_ids=devices)
+        # p2s_model.cuda(device=devices[0])
+        # p2s_model = torch.nn.DataParallel(p2s_model, device_ids=devices)
+        pass
 
     train_num_batch = len(train_dataloader)
     test_num_batch = len(test_dataloader)
@@ -434,8 +435,8 @@ def points_to_surf_train(opt):
         for train_batchind, batch_data_train in train_enum:
 
             # batch data to GPU
-            for key in batch_data_train.keys():
-                batch_data_train[key] = batch_data_train[key].cuda(device=devices[0], non_blocking=True)
+            # for key in batch_data_train.keys():
+            #     batch_data_train[key] = batch_data_train[key].cuda(device=devices[0], non_blocking=True)
 
             # set to training mode
             p2s_model.train()
@@ -485,8 +486,8 @@ def points_to_surf_train(opt):
                 test_batchind, batch_data_test = next(test_enum)
 
                 # batch data to GPU
-                for key in batch_data_test.keys():
-                    batch_data_test[key] = batch_data_test[key].cuda(device=devices[0], non_blocking=True)
+                # for key in batch_data_test.keys():
+                #     batch_data_test[key] = batch_data_test[key].cuda(device=devices[0], non_blocking=True)
 
                 # forward pass
                 with torch.no_grad():

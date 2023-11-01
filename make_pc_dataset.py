@@ -165,7 +165,7 @@ def main(dataset_name: str):
 
 
 if __name__ == "__main__":
-    datasets = ['real_world', ]
+    datasets = ['p2p_ds_trial', ]
 
     for d in datasets:
         main(d)

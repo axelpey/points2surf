@@ -5,12 +5,19 @@ import numpy as np
 import torch
 import torch.nn.parallel
 import torch.utils.data
+import logging
+import multiprocessing
+import time
 from tqdm import tqdm
+from collections import OrderedDict
 
 from source.points_to_surf_model import PointsToSurfModel
 from source import data_loader
 from source import sdf_nn
 from source.base import file_utils
+
+
+torch.backends.cudnn.verbose = True
 
 
 def parse_arguments(args=None):
@@ -148,7 +155,7 @@ def make_dataloader(eval_opt, dataset, datasampler, model_batch_size):
 
 
 def make_regressor(train_opt, pred_dim, model_filename, device):
-
+    print('Making model object...')
     use_query_point = any([f in train_opt.outputs for f in ['imp_surf', 'imp_surf_magnitude', 'imp_surf_sign']])
     p2s_model = PointsToSurfModel(
         net_size_max=train_opt.net_size if 'net_size' in train_opt else 1024,
@@ -163,11 +170,71 @@ def make_regressor(train_opt, pred_dim, model_filename, device):
         single_transformer=train_opt.single_transformer,
         shared_transformation=train_opt.shared_transformer,
     )
+    
+    print("Loading model weights...")
 
-    p2s_model.cuda(device=device)  # same order as in training
-    p2s_model = torch.nn.DataParallel(p2s_model)
-    p2s_model.load_state_dict(torch.load(model_filename))
+    p2s_model.to(device=device, non_blocking=False)  # same order as in training
+    # p2s_model = torch.nn.DataParallel(p2s_model)
+    print(device)
+    loaded_model = torch.load(model_filename, map_location=device)
+    loaded_model_dict = OrderedDict([(k.replace("module.",""), v) for k, v in loaded_model.items()])
+    
+    target_model_dict = p2s_model.state_dict()
+    
+    # Every value in these 2 ordered dicts is a torch tensor. We want to check they have similar types and shapes, and
+    # also same device.
+    for k in loaded_model_dict.keys():
+        if loaded_model_dict[k].shape != target_model_dict[k].shape:
+            print("Shape mismatch for key: ", k)
+            print("Loaded model shape: ", loaded_model_dict[k].shape)
+            print("Target model shape: ", target_model_dict[k].shape)
+            exit(1)
+        if loaded_model_dict[k].dtype != target_model_dict[k].dtype:
+            print("Type mismatch for key: ", k)
+            print("Loaded model type: ", loaded_model_dict[k].dtype)
+            print("Target model type: ", target_model_dict[k].dtype)
+            exit(1)
+        if loaded_model_dict[k].device != target_model_dict[k].device:
+            print("Device mismatch for key: ", k)
+            print("Loaded model device: ", loaded_model_dict[k].device)
+            print("Target model device: ", target_model_dict[k].device)
+            exit(1)
+        
+    # print("Running load_state_dict")
+    # p2s_model.load_state_dict(loaded_model_dict)
+    
+    # 1. Before Update
+    # Let's pick the first key for demonstration (you can choose any other key)
+    first_key = list(target_model_dict.keys())[0]
+
+    # print("Before Update:")
+    # print("From p2s_model:", list(p2s_model.parameters())[0][0, 0, 0])  # Printing the first value of the first parameter tensor
+    # print("From target_model_dict:", target_model_dict[first_key][0, 0, 0])
+
+    
+    # Manually copy tensor data from loaded_model_dict to target_model_dict
+    torch.set_num_threads(1)
+    for k in loaded_model_dict.keys():
+        # print("Copying ", k)
+        # Ensure the tensors are on the same device
+        loaded_model_dict[k] = loaded_model_dict[k].to(target_model_dict[k].device)
+        
+        if k == "feat_local.stn2.conv3.weight":
+            pass
+            # print("Critical moment for ", k)
+            # print(loaded_model_dict[k].data.shape)
+        
+        # Copy the data
+        target_model_dict[k].data.copy_(loaded_model_dict[k].data)
+    
+    # 3. After Update
+    # print("\nAfter Update:")
+    # print("From p2s_model:", list(p2s_model.parameters())[0][0, 0, 0])
+    # print("From target_model_dict:", target_model_dict[first_key][0, 0, 0])
+    
+    # print("Model loaded successfully manually. Running eval")
     p2s_model.eval()
+    p2s_model.to(device=device)
     return p2s_model
 
 
@@ -295,6 +362,7 @@ def save_evaluation(datasampler, dataset, eval_opt, model_out_dir, output_ids, o
 
 
 def points_to_surf_eval(eval_opt):
+    multiprocessing.set_start_method('spawn', force=True)
 
     models = eval_opt.models.split()
 
@@ -359,7 +427,7 @@ def points_to_surf_eval(eval_opt):
 
             # batch data to GPU
             for key in batch_data.keys():
-                batch_data[key] = batch_data[key].cuda(non_blocking=True)
+                batch_data[key] = batch_data[key].to(device, non_blocking=True)
 
             fixed_radius = train_opt.patch_radius > 0.0
             patch_radius = train_opt.patch_radius
